@@ -15,15 +15,21 @@ window.addEventListener("load", () => {
   }
 
   function saveWithTimeout(payload) {
-    return Promise.race([
-      saveRecord(payload),
-      new Promise((_, reject) =>
-        window.setTimeout(
-          () => reject(new Error("El servidor tardó demasiado. Verifique la conexión e intente nuevamente.")),
-          30000,
-        ),
-      ),
-    ]);
+    // Las instancias gratuitas de Render pueden despertarse después de varios
+    // segundos de inactividad. Abortamos solo tras un margen realista y con un
+    // mensaje que explique qué está ocurriendo.
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 90000);
+    const wakingUp = window.setTimeout(() => {
+      if (saveButton.disabled) {
+        feedback.textContent = "El servicio se está activando. Conservamos el formulario y seguimos intentando guardar…";
+      }
+    }, 12000);
+
+    return saveRecord(payload, controller.signal).finally(() => {
+      window.clearTimeout(timeout);
+      window.clearTimeout(wakingUp);
+    });
   }
 
   // Conserva el dato que se está editando aun antes de pasar a la siguiente etapa.
@@ -68,7 +74,10 @@ window.addEventListener("load", () => {
       const notice = document.getElementById("storageNotice");
       notice.textContent = `Registro #${savedId} guardado correctamente con todas sus etapas.`;
     } catch (error) {
-      feedback.textContent = `No se pudo guardar: ${error.message}`;
+      const message = error.name === "AbortError"
+        ? "El servicio no respondió en 90 segundos. El formulario permanece diligenciado; intente guardar otra vez."
+        : error.message;
+      feedback.textContent = `No se pudo guardar: ${message}`;
       feedback.style.color = "#a13c33";
       saveButton.disabled = false;
       saveButton.textContent = "Guardar registro";
