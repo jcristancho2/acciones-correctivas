@@ -73,10 +73,22 @@ window.addEventListener("load", () => {
           const label = document.createElement("label");
           label.textContent = fieldLabels[key] || key.replaceAll("_", " ");
           const isLong = textFields.has(key) || String(value ?? "").length > 90;
-          const input = document.createElement(isLong ? "textarea" : "input");
+          const input = document.createElement(key === "estado" ? "select" : isLong ? "textarea" : "input");
           input.name = key;
-          input.value = value ?? "";
-          if (!isLong) input.type = key.startsWith("fecha_") ? "date" : key === "correo_responsable" ? "email" : "text";
+          if (key === "estado") {
+            const statuses = ["En proceso", "Terminada"];
+            if (value && !statuses.includes(value)) statuses.push(value);
+            statuses.forEach((status) => {
+              const option = document.createElement("option");
+              option.value = status;
+              option.textContent = status;
+              option.selected = status === value;
+              input.append(option);
+            });
+          } else {
+            input.value = value ?? "";
+            if (!isLong) input.type = key.startsWith("fecha_") ? "date" : key === "correo_responsable" ? "email" : "text";
+          }
           if (isLong) label.classList.add("record-modal__wide");
           label.append(input);
           modalFields.append(label);
