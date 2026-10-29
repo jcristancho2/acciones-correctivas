@@ -1,12 +1,39 @@
-// Replaces the opaque native confirmation with clear validation and save status.
-// The HTML exposes these functions and bindings in the same page scope.
+// Guarda cada dato del formulario, incluidas las filas dinámicas creadas por el usuario.
+// El HTML expone las funciones y variables usadas aquí en el mismo ámbito global.
 window.addEventListener("load", () => {
   const form = document.getElementById("form");
   if (!form) return;
 
+  const feedback = document.getElementById("feedback");
+  const saveButton = document.getElementById("save");
+
+  function captureAll() {
+    saveCurrent();
+    // Las filas dinámicas pueden haber sido creadas después de cargar la etapa.
+    if (document.getElementById("correctionRows")) storeCorrections();
+    if (document.getElementById("actionRows")) storeActions();
+  }
+
+  function saveWithTimeout(payload) {
+    return Promise.race([
+      saveRecord(payload),
+      new Promise((_, reject) =>
+        window.setTimeout(
+          () => reject(new Error("El servidor tardó demasiado. Verifique la conexión e intente nuevamente.")),
+          30000,
+        ),
+      ),
+    ]);
+  }
+
+  // Conserva el dato que se está editando aun antes de pasar a la siguiente etapa.
+  form.addEventListener("input", captureAll);
+  form.addEventListener("change", captureAll);
+
   form.onsubmit = async (event) => {
     event.preventDefault();
-    saveCurrent();
+    captureAll();
+
     const required = [
       ["proceso", "área o proceso"],
       ["situacion", "descripción del hallazgo"],
@@ -16,36 +43,30 @@ window.addEventListener("load", () => {
     const missing = required
       .filter(([key]) => !String(formData[key] || "").trim())
       .map(([, label]) => label);
-    const feedback = document.getElementById("feedback");
     if (missing.length) {
       feedback.textContent = `Para guardar faltan: ${missing.join(", ")}. Revise las etapas anteriores.`;
       feedback.style.color = "#a13c33";
       return;
     }
 
-    const saveButton = document.getElementById("save");
     saveButton.disabled = true;
     saveButton.textContent = "Guardando…";
-    feedback.textContent = "Guardando el registro en SQLite…";
+    feedback.textContent = "Guardando toda la información del registro…";
     feedback.style.color = "#236078";
+
     try {
       const payload = { ...formData };
-      if (!editing) {
-        delete payload.fecha_real_accion;
-        delete payload.seguimiento;
-      } else if (!String(payload.seguimiento || "").trim()) {
-        payload.fecha_real_accion = "";
-      }
-      if (!String(payload.seguimiento || "").trim()) payload.eficacia = "";
+      // Solo se eliminan metadatos del servidor: los datos diligenciados se conservan.
       delete payload.id;
       delete payload.creado_en;
       delete payload.actualizado_en;
-      const savedId = await saveRecord(payload);
+
+      const savedId = await saveWithTimeout(payload);
       document.getElementById("historyArea").value = payload.proceso;
       drawRecords();
       navigate("panel");
       const notice = document.getElementById("storageNotice");
-      notice.textContent = `Registro #${savedId} guardado correctamente en SQLite.`;
+      notice.textContent = `Registro #${savedId} guardado correctamente con todas sus etapas.`;
     } catch (error) {
       feedback.textContent = `No se pudo guardar: ${error.message}`;
       feedback.style.color = "#a13c33";
