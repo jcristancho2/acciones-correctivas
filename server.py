@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -17,6 +18,7 @@ DATABASE = DATA_DIR / "acciones_correctivas.sqlite3"
 FIREBASE_CREDENTIALS = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
 FIREBASE_SERVICE_ACCOUNT_JSON = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
 _firestore = None
+_firestore_lock = threading.Lock()
 
 
 def _firestore_client():
@@ -29,17 +31,22 @@ def _firestore_client():
     if not FIREBASE_CREDENTIALS and not FIREBASE_SERVICE_ACCOUNT_JSON:
         return None
     if _firestore is None:
-        import firebase_admin
-        from firebase_admin import credentials, firestore
+        # ThreadingHTTPServer atiende solicitudes en paralelo. Sin este candado,
+        # dos solicitudes de arranque pueden intentar crear la app de Firebase a
+        # la vez y una de ellas falla antes de guardar o listar el registro.
+        with _firestore_lock:
+            if _firestore is None:
+                import firebase_admin
+                from firebase_admin import credentials, firestore
 
-        if not firebase_admin._apps:
-            credential_source = (
-                json.loads(FIREBASE_SERVICE_ACCOUNT_JSON)
-                if FIREBASE_SERVICE_ACCOUNT_JSON
-                else FIREBASE_CREDENTIALS
-            )
-            firebase_admin.initialize_app(credentials.Certificate(credential_source))
-        _firestore = firestore.client()
+                if not firebase_admin._apps:
+                    credential_source = (
+                        json.loads(FIREBASE_SERVICE_ACCOUNT_JSON)
+                        if FIREBASE_SERVICE_ACCOUNT_JSON
+                        else FIREBASE_CREDENTIALS
+                    )
+                    firebase_admin.initialize_app(credentials.Certificate(credential_source))
+                _firestore = firestore.client()
     return _firestore
 
 
