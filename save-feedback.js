@@ -67,7 +67,7 @@ window.addEventListener("load", () => {
       modalFields.replaceChildren();
       const remainingKeys = Object.keys(record).filter((key) => !fieldOrder.includes(key));
       [...fieldOrder, ...remainingKeys]
-        .filter((key) => !["id", "creado_en", "actualizado_en"].includes(key) && Object.hasOwn(record, key))
+        .filter((key) => !["id", "creado_en", "actualizado_en", "causa_validada"].includes(key) && Object.hasOwn(record, key))
         .map((key) => [key, record[key]])
         .forEach(([key, value]) => {
           const label = document.createElement("label");
@@ -101,6 +101,7 @@ window.addEventListener("load", () => {
       event.preventDefault();
       const id = Number(modalForm.dataset.recordId);
       const payload = Object.fromEntries(new FormData(modalForm).entries());
+      delete payload.causa_validada;
       modalSave.disabled = true;
       modalSave.textContent = "Guardando…";
       modalStatus.textContent = "Guardando todos los cambios en Firestore…";
@@ -177,7 +178,7 @@ window.addEventListener("load", () => {
     if (step !== 1) return;
     const fields = document.getElementById("stepFields");
     if (!fields || fields.querySelector("#analysisRows")) return;
-    ["variable5m", "porque1", "porque2", "porque3", "porque4"].forEach((name) => fields.querySelector(`[name="${name}"]`)?.closest("label")?.remove());
+    ["variable5m", "porque1", "porque2", "porque3", "porque4", "causa_validada"].forEach((name) => fields.querySelector(`[name="${name}"]`)?.closest("label")?.remove());
     const wrapper = document.createElement("div");
     wrapper.className = "wide";
     wrapper.innerHTML = '<p class="muted"><b>Análisis de variables 5M.</b> Complete los porqués y, si aplica, agregue otra variable para documentar su análisis.</p><div id="analysisRows"></div><button type="button" class="secondary" id="addAnalysisVariable">Sí, necesito analizar otra variable</button>';
@@ -262,8 +263,11 @@ window.addEventListener("load", () => {
       delete payload.id;
       delete payload.creado_en;
       delete payload.actualizado_en;
+      delete payload.causa_validada;
 
       const savedId = await saveWithTimeout(payload);
+      saveButton.disabled = false;
+      saveButton.textContent = "Guardar registro";
       document.getElementById("historyArea").value = payload.proceso;
       drawRecords();
       navigate("panel");

@@ -79,7 +79,7 @@ def _firestore_actions() -> list[dict] | None:
     db = _firestore_client()
     if db is None:
         return None
-    return [document.to_dict() for document in db.collection("acciones").order_by("id", direction="DESCENDING").stream()]
+    return [document.to_dict() for document in db.collection("acciones").order_by("id", direction="DESCENDING").stream(timeout=25)]
 
 
 def _next_firestore_id(db) -> int:
@@ -105,7 +105,7 @@ def _create_action(payload: dict) -> int:
     if db is not None:
         action_id = _next_firestore_id(db)
         db.collection("acciones").document(str(action_id)).set(
-            {**payload, "id": action_id, "creado_en": now, "actualizado_en": now}
+            {**payload, "id": action_id, "creado_en": now, "actualizado_en": now}, timeout=25
         )
         return action_id
     with _connection() as conn:
@@ -120,9 +120,9 @@ def _update_action(action_id: int, payload: dict) -> bool:
     db = _firestore_client()
     if db is not None:
         document = db.collection("acciones").document(str(action_id))
-        if not document.get().exists:
+        if not document.get(timeout=25).exists:
             return False
-        document.update({**payload, "id": action_id, "actualizado_en": _now()})
+        document.update({**payload, "id": action_id, "actualizado_en": _now()}, timeout=25)
         return True
     with _connection() as conn:
         cur = conn.execute(
