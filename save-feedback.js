@@ -24,6 +24,13 @@ window.addEventListener("load", () => {
     "accion_correctiva", "seguimiento", "eficacia", "observaciones", "evidencia", "correcciones_multiples",
     "acciones_multiples", "analisis_5m",
   ]);
+  const fieldOrder = [
+    "proceso", "origen", "situacion", "fecha_realizacion",
+    "variable5m", "analisis_5m", "porque1", "porque2", "porque3", "porque4", "similares", "causa_validada",
+    "correcciones_multiples", "correccion", "fecha_correccion", "evidencia",
+    "acciones_multiples", "accion_correctiva", "responsable", "correo_responsable", "fecha_propuesta",
+    "seguimiento", "fecha_real_accion", "eficacia", "observaciones", "matriz_riesgos", "estado",
+  ];
 
   function installEditModal() {
     const style = document.createElement("style");
@@ -58,8 +65,10 @@ window.addEventListener("load", () => {
       modal.querySelector("#recordModalTitle").textContent = `Editar registro #${id}`;
       modalStatus.textContent = "Modifique cualquier dato y guarde los cambios.";
       modalFields.replaceChildren();
-      Object.entries(record)
-        .filter(([key]) => !["id", "creado_en", "actualizado_en"].includes(key))
+      const remainingKeys = Object.keys(record).filter((key) => !fieldOrder.includes(key));
+      [...fieldOrder, ...remainingKeys]
+        .filter((key) => !["id", "creado_en", "actualizado_en"].includes(key) && Object.hasOwn(record, key))
+        .map((key) => [key, record[key]])
         .forEach(([key, value]) => {
           const label = document.createElement("label");
           label.textContent = fieldLabels[key] || key.replaceAll("_", " ");
