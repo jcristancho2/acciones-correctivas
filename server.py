@@ -15,6 +15,7 @@ ROOT = Path(__file__).parent
 DATA_DIR = Path(os.environ.get("DATA_DIR", ROOT))
 DATABASE = DATA_DIR / "acciones_correctivas.sqlite3"
 FIREBASE_CREDENTIALS = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+FIREBASE_SERVICE_ACCOUNT_JSON = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
 _firestore = None
 
 
@@ -25,14 +26,19 @@ def _firestore_client():
     de configurar Render.
     """
     global _firestore
-    if not FIREBASE_CREDENTIALS:
+    if not FIREBASE_CREDENTIALS and not FIREBASE_SERVICE_ACCOUNT_JSON:
         return None
     if _firestore is None:
         import firebase_admin
         from firebase_admin import credentials, firestore
 
         if not firebase_admin._apps:
-            firebase_admin.initialize_app(credentials.Certificate(FIREBASE_CREDENTIALS))
+            credential_source = (
+                json.loads(FIREBASE_SERVICE_ACCOUNT_JSON)
+                if FIREBASE_SERVICE_ACCOUNT_JSON
+                else FIREBASE_CREDENTIALS
+            )
+            firebase_admin.initialize_app(credentials.Certificate(credential_source))
         _firestore = firestore.client()
     return _firestore
 
