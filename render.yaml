@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: acciones-correctivas
+    runtime: python
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "HOST=0.0.0.0 python server.py"
+    healthCheckPath: /

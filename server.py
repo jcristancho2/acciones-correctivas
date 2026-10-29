@@ -1,11 +1,8 @@
-"""Servidor local para la aplicación de acciones correctivas.
-
-Sirve el HTML estático y mantiene los registros en SQLite sin dependencias
-externas. Está destinado a uso local (127.0.0.1), no a exponerlo en red.
-"""
+"""API de acciones correctivas con Firestore para producción y SQLite local."""
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from datetime import datetime, timezone
 from http import HTTPStatus
@@ -15,10 +12,33 @@ from urllib.parse import unquote, urlparse
 
 
 ROOT = Path(__file__).parent
-DATABASE = ROOT / "acciones_correctivas.sqlite3"
+DATA_DIR = Path(os.environ.get("DATA_DIR", ROOT))
+DATABASE = DATA_DIR / "acciones_correctivas.sqlite3"
+FIREBASE_CREDENTIALS = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+_firestore = None
+
+
+def _firestore_client():
+    """Devuelve Firestore cuando Render tiene la credencial de Firebase.
+
+    SQLite se conserva para desarrollo local y para iniciar la aplicación antes
+    de configurar Render.
+    """
+    global _firestore
+    if not FIREBASE_CREDENTIALS:
+        return None
+    if _firestore is None:
+        import firebase_admin
+        from firebase_admin import credentials, firestore
+
+        if not firebase_admin._apps:
+            firebase_admin.initialize_app(credentials.Certificate(FIREBASE_CREDENTIALS))
+        _firestore = firestore.client()
+    return _firestore
 
 
 def _connection() -> sqlite3.Connection:
+    DATABASE.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DATABASE)
     conn.row_factory = sqlite3.Row
     conn.execute(
@@ -40,6 +60,63 @@ def _row(row: sqlite3.Row) -> dict:
     record = json.loads(row["payload"])
     record.update(id=row["id"], creado_en=row["creado_en"], actualizado_en=row["actualizado_en"])
     return record
+
+
+def _firestore_actions() -> list[dict] | None:
+    db = _firestore_client()
+    if db is None:
+        return None
+    return [document.to_dict() for document in db.collection("acciones").order_by("id", direction="DESCENDING").stream()]
+
+
+def _next_firestore_id(db) -> int:
+    from firebase_admin import firestore
+
+    counter = db.collection("_meta").document("acciones")
+    transaction = db.transaction()
+
+    @firestore.transactional
+    def increment(transaction):
+        snapshot = counter.get(transaction=transaction)
+        last_id = int(snapshot.to_dict().get("last_id", 0)) if snapshot.exists else 0
+        next_id = last_id + 1
+        transaction.set(counter, {"last_id": next_id})
+        return next_id
+
+    return increment(transaction)
+
+
+def _create_action(payload: dict) -> int:
+    db = _firestore_client()
+    now = _now()
+    if db is not None:
+        action_id = _next_firestore_id(db)
+        db.collection("acciones").document(str(action_id)).set(
+            {**payload, "id": action_id, "creado_en": now, "actualizado_en": now}
+        )
+        return action_id
+    with _connection() as conn:
+        cur = conn.execute(
+            "INSERT INTO acciones (payload, creado_en, actualizado_en) VALUES (?, ?, ?)",
+            (json.dumps(payload, ensure_ascii=False), now, now),
+        )
+    return cur.lastrowid
+
+
+def _update_action(action_id: int, payload: dict) -> bool:
+    db = _firestore_client()
+    if db is not None:
+        document = db.collection("acciones").document(str(action_id))
+        if not document.get().exists:
+            return False
+        document.update({**payload, "id": action_id, "actualizado_en": _now()})
+        return True
+    with _connection() as conn:
+        cur = conn.execute(
+            "UPDATE acciones SET payload = ?, actualizado_en = ? WHERE id = ?",
+            (json.dumps(payload, ensure_ascii=False), _now(), action_id),
+        )
+    return cur.rowcount > 0
 
 
 class ActionsHandler(SimpleHTTPRequestHandler):
@@ -70,9 +147,12 @@ class ActionsHandler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path == "/api/acciones":
-            with _connection() as conn:
-                rows = conn.execute("SELECT * FROM acciones ORDER BY id DESC").fetchall()
-            self._json(HTTPStatus.OK, [_row(row) for row in rows])
+            actions = _firestore_actions()
+            if actions is None:
+                with _connection() as conn:
+                    rows = conn.execute("SELECT * FROM acciones ORDER BY id DESC").fetchall()
+                actions = [_row(row) for row in rows]
+            self._json(HTTPStatus.OK, actions)
             return
         if path == "/api/avisos":
             self._json(HTTPStatus.OK, [])
@@ -96,13 +176,7 @@ class ActionsHandler(SimpleHTTPRequestHandler):
         payload = self._body()
         if payload is None:
             return
-        now = _now()
-        with _connection() as conn:
-            cur = conn.execute(
-                "INSERT INTO acciones (payload, creado_en, actualizado_en) VALUES (?, ?, ?)",
-                (json.dumps(payload, ensure_ascii=False), now, now),
-            )
-        self._json(HTTPStatus.CREATED, {"id": cur.lastrowid})
+        self._json(HTTPStatus.CREATED, {"id": _create_action(payload)})
 
     def do_PUT(self) -> None:
         prefix = "/api/acciones/"
@@ -114,18 +188,15 @@ class ActionsHandler(SimpleHTTPRequestHandler):
         if payload is None:
             return
         action_id = int(path[len(prefix):])
-        with _connection() as conn:
-            cur = conn.execute(
-                "UPDATE acciones SET payload = ?, actualizado_en = ? WHERE id = ?",
-                (json.dumps(payload, ensure_ascii=False), _now(), action_id),
-            )
-        if cur.rowcount == 0:
+        if not _update_action(action_id, payload):
             self._json(HTTPStatus.NOT_FOUND, {"error": "Registro no encontrado"})
             return
         self._json(HTTPStatus.OK, {"id": action_id})
 
 
 if __name__ == "__main__":
-    server = ThreadingHTTPServer(("127.0.0.1", 8091), ActionsHandler)
-    print("Acciones correctivas: http://127.0.0.1:8091/")
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", "8091"))
+    server = ThreadingHTTPServer((host, port), ActionsHandler)
+    print(f"Acciones correctivas: http://{host}:{port}/")
     server.serve_forever()
