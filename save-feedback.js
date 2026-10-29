@@ -125,6 +125,84 @@ window.addEventListener("load", () => {
 
   installEditModal();
 
+  // El asistente guiado ya permite analizar más de una variable 5M. Esta capa
+  // lleva la misma capacidad al formulario directo para que ambos recorridos
+  // guarden exactamente la misma estructura de análisis.
+  function analysisVariables() {
+    try {
+      const value = JSON.parse(formData.analisis_5m || "[]");
+      if (Array.isArray(value) && value.length) return value;
+    } catch (_) {
+      // Se reconstruye el formato a partir de registros antiguos.
+    }
+    return [{ variable: formData.variable5m || "", porques: [formData.porque1 || "", formData.porque2 || "", formData.porque3 || "", formData.porque4 || ""] }];
+  }
+
+  function storeAnalysisVariables() {
+    const rows = analysisVariables();
+    document.querySelectorAll("#analysisRows [data-analysis]").forEach((element) => {
+      const item = rows[Number(element.dataset.analysis)];
+      if (element.dataset.key === "variable") item.variable = element.value;
+      else item.porques[Number(element.dataset.key)] = element.value;
+    });
+    formData.analisis_5m = JSON.stringify(rows);
+    formData.variable5m = rows.map((item) => item.variable).filter(Boolean).join(" / ");
+    rows[0]?.porques.forEach((answer, index) => { formData[`porque${index + 1}`] = answer; });
+    formData.causa_validada = rows.filter((item) => item.variable || item.porques[3]).map((item) => `${item.variable || "Variable sin seleccionar"}: ${item.porques[3] || ""}`).join("\n");
+  }
+
+  function drawAnalysisVariables() {
+    const box = document.getElementById("analysisRows");
+    if (!box) return;
+    const variables = analysisVariables();
+    const options5m = ["Materiales", "Mano de obra", "Método", "Medio ambiente", "Maquinaria"];
+    box.innerHTML = variables.map((item, index) => `
+      <div class="correction-row">
+        <div class="section-title"><b>Variable 5M ${index + 1}</b><button type="button" class="secondary" data-remove-analysis="${index}" ${variables.length === 1 ? "disabled" : ""}>Eliminar</button></div>
+        <label class="field">Variable a analizar<select data-analysis="${index}" data-key="variable"><option value="">Seleccione...</option>${options5m.map((option) => `<option value="${option}" ${item.variable === option ? "selected" : ""}>${option}</option>`).join("")}</select></label>
+        ${item.porques.map((answer, why) => `<label class="field wide">${why === 0 ? "¿Por qué ocurrió?" : `¿Por qué? (${why + 1})`}<textarea data-analysis="${index}" data-key="${why}">${safe(answer || "")}</textarea></label>`).join("")}
+      </div>`).join("");
+    box.querySelectorAll("[data-analysis]").forEach((element) => element.addEventListener("input", storeAnalysisVariables));
+    box.querySelectorAll("[data-analysis]").forEach((element) => element.addEventListener("change", storeAnalysisVariables));
+    box.querySelectorAll("[data-remove-analysis]").forEach((button) => button.addEventListener("click", () => {
+      const next = analysisVariables();
+      next.splice(Number(button.dataset.removeAnalysis), 1);
+      formData.analisis_5m = JSON.stringify(next);
+      drawAnalysisVariables();
+      storeAnalysisVariables();
+    }));
+  }
+
+  function enhanceAnalysisStep() {
+    if (step !== 1) return;
+    const fields = document.getElementById("stepFields");
+    if (!fields || fields.querySelector("#analysisRows")) return;
+    ["variable5m", "porque1", "porque2", "porque3", "porque4"].forEach((name) => fields.querySelector(`[name="${name}"]`)?.closest("label")?.remove());
+    const wrapper = document.createElement("div");
+    wrapper.className = "wide";
+    wrapper.innerHTML = '<p class="muted"><b>Análisis de variables 5M.</b> Complete los porqués y, si aplica, agregue otra variable para documentar su análisis.</p><div id="analysisRows"></div><button type="button" class="secondary" id="addAnalysisVariable">Sí, necesito analizar otra variable</button>';
+    fields.prepend(wrapper);
+    document.getElementById("addAnalysisVariable").addEventListener("click", () => {
+      storeAnalysisVariables();
+      const next = analysisVariables();
+      next.push({ variable: "", porques: ["", "", "", ""] });
+      formData.analisis_5m = JSON.stringify(next);
+      drawAnalysisVariables();
+    });
+    drawAnalysisVariables();
+  }
+
+  const originalDrawStep = drawStep;
+  drawStep = function enhancedDrawStep() {
+    originalDrawStep();
+    enhanceAnalysisStep();
+  };
+  const originalSaveCurrent = saveCurrent;
+  saveCurrent = function enhancedSaveCurrent() {
+    originalSaveCurrent();
+    if (document.getElementById("analysisRows")) storeAnalysisVariables();
+  };
+
   function captureAll() {
     saveCurrent();
     // Las filas dinámicas pueden haber sido creadas después de cargar la etapa.
