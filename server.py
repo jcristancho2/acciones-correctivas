@@ -132,6 +132,19 @@ def _update_action(action_id: int, payload: dict) -> bool:
     return cur.rowcount > 0
 
 
+def _delete_action(action_id: int) -> bool:
+    db = _firestore_client()
+    if db is not None:
+        document = db.collection("acciones").document(str(action_id))
+        if not document.get(timeout=25).exists:
+            return False
+        document.delete(timeout=25)
+        return True
+    with _connection() as conn:
+        cur = conn.execute("DELETE FROM acciones WHERE id = ?", (action_id,))
+    return cur.rowcount > 0
+
+
 class ActionsHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
@@ -202,6 +215,18 @@ class ActionsHandler(SimpleHTTPRequestHandler):
             return
         action_id = int(path[len(prefix):])
         if not _update_action(action_id, payload):
+            self._json(HTTPStatus.NOT_FOUND, {"error": "Registro no encontrado"})
+            return
+        self._json(HTTPStatus.OK, {"id": action_id})
+
+    def do_DELETE(self) -> None:
+        prefix = "/api/acciones/"
+        path = urlparse(self.path).path
+        if not path.startswith(prefix) or not path[len(prefix):].isdigit():
+            self._json(HTTPStatus.NOT_FOUND, {"error": "Ruta no encontrada"})
+            return
+        action_id = int(path[len(prefix):])
+        if not _delete_action(action_id):
             self._json(HTTPStatus.NOT_FOUND, {"error": "Registro no encontrado"})
             return
         self._json(HTTPStatus.OK, {"id": action_id})
