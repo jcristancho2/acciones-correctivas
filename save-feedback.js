@@ -38,6 +38,7 @@ window.addEventListener("load", () => {
       .record-modal{position:fixed;inset:0;z-index:1000;display:none;align-items:center;justify-content:center;padding:20px;background:rgba(15,35,48,.58)}
       .record-modal.open{display:flex}.record-modal__box{width:min(100%,940px);max-height:90vh;overflow:auto;background:#fff;border-radius:16px;padding:24px;box-shadow:0 20px 70px rgba(0,0,0,.3)}
       .record-modal__head{display:flex;gap:16px;align-items:center;justify-content:space-between;margin-bottom:16px}.record-modal__head h2{margin:0}.record-modal__grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.record-modal__grid label{display:flex;flex-direction:column;gap:6px;font-weight:600}.record-modal__grid input,.record-modal__grid textarea,.record-modal__grid select{font:inherit;padding:9px;border:1px solid #b9cbd5;border-radius:7px}.record-modal__grid textarea{min-height:92px;resize:vertical}.record-modal__wide{grid-column:1 / -1}.record-modal__actions{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}.record-modal__status{margin:12px 0 0;color:#236078}@media(max-width:650px){.record-modal__box{padding:18px}.record-modal__grid{grid-template-columns:1fr}}
+      .record-modal__analysis{font-weight:400;line-height:1.5;border:1px solid #c9dce5;background:#f6fafc;border-radius:8px;padding:12px}.record-modal__analysis p{margin:0 0 10px}.record-modal__analysis p:last-child{margin-bottom:0}.record-modal__analysis ol{margin:6px 0 0;padding-left:22px}.record-modal__analysis li{margin:4px 0}
     `;
     document.head.append(style);
 
@@ -58,6 +59,16 @@ window.addEventListener("load", () => {
     const modalStatus = modal.querySelector("#recordModalStatus");
     const modalSave = modal.querySelector("#recordModalSave");
 
+    function formattedAnalysis(value) {
+      try {
+        const rows = JSON.parse(value || "[]");
+        if (!Array.isArray(rows) || !rows.length) throw new Error("empty");
+        return rows.map((row, index) => `<p><b>Variable ${index + 1}: ${safe(row.variable || "Sin seleccionar")}</b></p><ol>${(row.porques || []).map((why, whyIndex) => `<li><b>Por qué ${whyIndex + 1}:</b> ${safe(why || "Sin registrar")}</li>`).join("")}</ol>`).join("");
+      } catch (_) {
+        return `<p>${safe(value || "No hay análisis registrado.")}</p>`;
+      }
+    }
+
     window.editRecord = (id) => {
       const record = records.find((item) => Number(item.id) === Number(id));
       if (!record) return;
@@ -72,6 +83,15 @@ window.addEventListener("load", () => {
         .forEach(([key, value]) => {
           const label = document.createElement("label");
           label.textContent = fieldLabels[key] || key.replaceAll("_", " ");
+          if (key === "analisis_5m") {
+            label.classList.add("record-modal__wide");
+            const summary = document.createElement("div");
+            summary.className = "record-modal__analysis";
+            summary.innerHTML = formattedAnalysis(value);
+            label.append(summary);
+            modalFields.append(label);
+            return;
+          }
           const isLong = textFields.has(key) || String(value ?? "").length > 90;
           const input = document.createElement(key === "estado" ? "select" : isLong ? "textarea" : "input");
           input.name = key;
@@ -102,6 +122,7 @@ window.addEventListener("load", () => {
       const id = Number(modalForm.dataset.recordId);
       const payload = Object.fromEntries(new FormData(modalForm).entries());
       delete payload.causa_validada;
+      delete payload.analisis_5m;
       modalSave.disabled = true;
       modalSave.textContent = "Guardando…";
       modalStatus.textContent = "Guardando todos los cambios en Firestore…";
