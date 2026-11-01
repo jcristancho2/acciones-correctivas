@@ -62,6 +62,15 @@ def _connection() -> sqlite3.Connection:
             actualizado_en TEXT NOT NULL
         )"""
     )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS auditoria_acciones (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            accion_id INTEGER NOT NULL,
+            evento TEXT NOT NULL,
+            detalle TEXT NOT NULL,
+            creado_en TEXT NOT NULL
+        )"""
+    )
     return conn
 
 
@@ -107,11 +116,18 @@ def _create_action(payload: dict) -> int:
         db.collection("acciones").document(str(action_id)).set(
             {**payload, "id": action_id, "creado_en": now, "actualizado_en": now}, timeout=25
         )
+        db.collection("acciones").document(str(action_id)).collection("bitacora").add(
+            {"evento": "creado", "detalle": payload, "creado_en": now}, timeout=25
+        )
         return action_id
     with _connection() as conn:
         cur = conn.execute(
             "INSERT INTO acciones (payload, creado_en, actualizado_en) VALUES (?, ?, ?)",
             (json.dumps(payload, ensure_ascii=False), now, now),
+        )
+        conn.execute(
+            "INSERT INTO auditoria_acciones (accion_id, evento, detalle, creado_en) VALUES (?, ?, ?, ?)",
+            (cur.lastrowid, "creado", json.dumps(payload, ensure_ascii=False), now),
         )
     return cur.lastrowid
 
@@ -123,13 +139,46 @@ def _update_action(action_id: int, payload: dict) -> bool:
         if not document.get(timeout=25).exists:
             return False
         document.update({**payload, "id": action_id, "actualizado_en": _now()}, timeout=25)
+        document.collection("bitacora").add(
+            {"evento": "actualizado", "detalle": payload, "creado_en": _now()}, timeout=25
+        )
         return True
     with _connection() as conn:
         cur = conn.execute(
             "UPDATE acciones SET payload = ?, actualizado_en = ? WHERE id = ?",
             (json.dumps(payload, ensure_ascii=False), _now(), action_id),
         )
+        if cur.rowcount:
+            conn.execute(
+                "INSERT INTO auditoria_acciones (accion_id, evento, detalle, creado_en) VALUES (?, ?, ?, ?)",
+                (action_id, "actualizado", json.dumps(payload, ensure_ascii=False), _now()),
+            )
     return cur.rowcount > 0
+
+
+def _validate_payload(payload: dict) -> str | None:
+    """Comprueba identificadores y el cierre de acciones sin alterar registros previos."""
+    for key in ("acciones_multiples", "correcciones_multiples"):
+        try:
+            entries = json.loads(payload.get(key, "[]"))
+        except (TypeError, json.JSONDecodeError):
+            return f"{key} debe contener una lista válida"
+        if not isinstance(entries, list):
+            return f"{key} debe contener una lista válida"
+        ids = [entry.get("id") for entry in entries if isinstance(entry, dict)]
+        if any(not item for item in ids) or len(ids) != len(set(ids)):
+            return f"Cada elemento de {key} debe tener un identificador único"
+    if payload.get("estado") == "Terminado":
+        actions = json.loads(payload.get("acciones_multiples", "[]"))
+        incomplete = [
+            item for item in actions
+            if not all(str(item.get(field, "")).strip() for field in ("seguimiento", "fecha_real_implementacion", "eficacia"))
+        ]
+        if incomplete:
+            return "No se puede terminar el registro: complete seguimiento, fecha real y eficacia de cada acción."
+        if payload.get("rol_autoriza") not in ("Calidad", "Mejora Continua"):
+            return "El cierre debe ser autorizado por Calidad o Mejora Continua."
+    return None
 
 
 def _delete_action(action_id: int) -> bool:
@@ -202,6 +251,10 @@ class ActionsHandler(SimpleHTTPRequestHandler):
         payload = self._body()
         if payload is None:
             return
+        error = _validate_payload(payload)
+        if error:
+            self._json(HTTPStatus.BAD_REQUEST, {"error": error})
+            return
         self._json(HTTPStatus.CREATED, {"id": _create_action(payload)})
 
     def do_PUT(self) -> None:
@@ -212,6 +265,10 @@ class ActionsHandler(SimpleHTTPRequestHandler):
             return
         payload = self._body()
         if payload is None:
+            return
+        error = _validate_payload(payload)
+        if error:
+            self._json(HTTPStatus.BAD_REQUEST, {"error": error})
             return
         action_id = int(path[len(prefix):])
         if not _update_action(action_id, payload):
