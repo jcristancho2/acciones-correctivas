@@ -168,16 +168,6 @@ def _validate_payload(payload: dict) -> str | None:
         ids = [entry.get("id") for entry in entries if isinstance(entry, dict)]
         if any(not item for item in ids) or len(ids) != len(set(ids)):
             return f"Cada elemento de {key} debe tener un identificador único"
-    if payload.get("estado") == "Terminado":
-        actions = json.loads(payload.get("acciones_multiples", "[]"))
-        incomplete = [
-            item for item in actions
-            if not all(str(item.get(field, "")).strip() for field in ("seguimiento", "fecha_real_implementacion", "eficacia"))
-        ]
-        if incomplete:
-            return "No se puede terminar el registro: complete seguimiento, fecha real y eficacia de cada acción."
-        if payload.get("rol_autoriza") not in ("Calidad", "Mejora Continua"):
-            return "El cierre debe ser autorizado por Calidad o Mejora Continua."
     return None
 
 
