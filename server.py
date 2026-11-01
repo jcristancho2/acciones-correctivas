@@ -224,7 +224,6 @@ class ActionsHandler(SimpleHTTPRequestHandler):
             return
         if unquote(path) in ("/", "/index.html"):
             page = (ROOT / "index.html").read_text(encoding="utf-8")
-            page = page.replace("</body>", '<script src="/save-feedback.js"></script></body>')
             body = page.encode("utf-8")
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/html; charset=utf-8")
